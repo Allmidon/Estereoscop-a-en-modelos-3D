@@ -5,58 +5,13 @@
     <meta charset="utf-g" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
     <style>
-        body {
-            margin: 0;
-            padding: 0;
-            font-family: sans-serif;
-            overflow: hidden;
-        }
-        #app-container {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-        }
-        #ui-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            pointer-events: none;
-            color: white;
-            text-shadow: 2px 2px 4px #000000;
-        }
-        .menu {
-            background: rgba(0, 0, 0, 0.5);
-            border-radius: 10px;
-            padding: 20px;
-            display: flex;
-            flex-direction: column;
-            gap: 15px;
-            pointer-events: auto;
-        }
-        #menu-ui, #game-ui {
-            display: none;
-        }
-        button {
-            font-size: 1.2em;
-            padding: 10px 20px;
-            border: none;
-            border-radius: 5px;
-            background-color: #007bff;
-            color: white;
-            cursor: pointer;
-            transition: background-color 0.3s;
-        }
-        button:hover {
-            background-color: #0056b3;
-        }
+        body { margin: 0; padding: 0; font-family: sans-serif; overflow: hidden; }
+        #app-container { position: fixed; top: 0; left: 0; width: 100%; height: 100%; }
+        #ui-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; pointer-events: none; color: white; text-shadow: 2px 2px 4px #000000; }
+        .menu { background: rgba(0, 0, 0, 0.5); border-radius: 10px; padding: 20px; display: flex; flex-direction: column; gap: 15px; pointer-events: auto; }
+        #menu-ui, #game-ui { display: none; }
+        button { font-size: 1.2em; padding: 10px 20px; border: none; border-radius: 5px; background-color: #007bff; color: white; cursor: pointer; transition: background-color 0.3s; }
+        button:hover { background-color: #0056b3; }
     </style>
 </head>
 <body>
@@ -97,8 +52,11 @@
         let controls;
         let currentState = 'MENU';
         
-        // --- NUEVAS Variables para VR ---
-        let controller, reticle, raycaster, interactableGroup;
+        // --- Variables para VR y Gaze ---
+        let reticle, raycaster, interactableGroup;
+        let currentGazeTarget = null; // Qué objeto estamos mirando
+        let gazeDwellTime = 0; // Cuánto tiempo lo hemos mirado
+        const DWELL_TIME_THRESHOLD = 2.0; // 2 segundos
 
         // Elementos de la UI HTML
         const uiMenu = document.getElementById('menu-ui');
@@ -126,11 +84,11 @@
 
             // --- Configuración de Interacción VR ---
             raycaster = new THREE.Raycaster();
-            interactableGroup = new THREE.Group(); // Grupo para botones 3D
+            interactableGroup = new THREE.Group();
             scene.add(interactableGroup);
 
             // 1. El punto blanco (Retícula)
-            const reticleGeo = new THREE.CircleGeometry(0.002, 16); // Pequeño círculo
+            const reticleGeo = new THREE.CircleGeometry(0.002, 16);
             const reticleMat = new THREE.MeshBasicMaterial({ 
                 color: 0xffffff, 
                 fog: false, 
@@ -139,19 +97,13 @@
                 opacity: 0.75
             });
             reticle = new THREE.Mesh(reticleGeo, reticleMat);
-            reticle.position.z = -0.5; // A 50cm delante de la cámara
+            reticle.position.z = -0.5;
             reticle.renderOrder = 999; // Renderizar encima de todo
-            camera.add(reticle); // Se mueve con la cámara
-
-            // 2. El controlador (para el "clic")
-            controller = renderer.xr.getController(0);
-            controller.addEventListener('selectstart', onSelectStart);
-            scene.add(controller);
-
-            // 3. Listeners de sesión VR para mostrar/ocultar UIs
+            camera.add(reticle);
+            
+            // 2. Listeners de sesión VR
             renderer.xr.addEventListener('sessionstart', updateUIVisibility);
             renderer.xr.addEventListener('sessionend', updateUIVisibility);
-
 
             // --- Eventos de la UI HTML ---
             btnToEnv1.onclick = () => switchScene('ESCENARIO_1');
@@ -164,6 +116,7 @@
 
         // --- Bucle de Animación ---
         function animate() {
+            // Obtener el tiempo delta es crucial para el temporizador
             const delta = clock.getDelta();
 
             if (currentState === 'ESCENARIO_1' || currentState === 'ESCENARIO_2') {
@@ -173,8 +126,8 @@
                 if (mixer) mixer.update(delta);
             }
             
-            // Comprobar "hover" en VR
-            handleControllerRaycast();
+            // Comprobar "hover" y "clic por mirada" en VR
+            handleGazeInteraction(delta);
 
             renderer.render(scene, camera);
         }
@@ -183,36 +136,33 @@
         function switchScene(newState) {
             currentState = newState;
 
-            // 1. Limpiar la escena anterior
-            scene.clear(); // Limpia modelos, luces, etc.
-            interactableGroup.clear(); // Limpia botones VR
+            scene.clear();
+            interactableGroup.clear();
             if (mixer) mixer = null;
             if (controls) controls.dispose();
 
-            // 2. Volver a añadir elementos persistentes
+            // Volver a añadir elementos persistentes
             scene.add(camera); // La cámara (con el retículo)
-            scene.add(controller); // El controlador
             scene.add(interactableGroup); // El grupo de botones
 
-            // 3. Configurar la nueva escena
+            // Resetear el estado de la mirada
+            currentGazeTarget = null;
+            gazeDwellTime = 0;
+
             switch (newState) {
                 case 'MENU':
                     setupMenu();
-                    createVRMenu(); // Añade botones 3D al menú
+                    createVRMenu();
                     break;
-                
                 case 'ESCENARIO_1':
                     setupEscenario1();
-                    createVRGameUI(); // Añade botones 3D en-juego
+                    createVRGameUI();
                     break;
-                
                 case 'ESCENARIO_2':
                     setupEscenario2();
-                    createVRGameUI(); // Añade botones 3D en-juego
+                    createVRGameUI();
                     break;
             }
-
-            // 4. Actualizar visibilidad de UI (HTML vs VR)
             updateUIVisibility();
         }
 
@@ -272,26 +222,18 @@
             });
         }
 
-        // --- NUEVAS Funciones de UI VR ---
+        // --- Funciones de UI VR ---
 
         /**
          * Crea un mesh de botón 3D con texto.
-         * @param {string} text - El texto a mostrar.
-         * @param {string} name - El nombre del objeto (para el raycaster).
-         * @param {number} yPos - La posición Y en la escena.
-         * @returns {THREE.Mesh}
          */
         function createButtonMesh(text, name, yPos) {
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
             canvas.width = 512;
             canvas.height = 128;
-            
-            // Fondo del botón
-            ctx.fillStyle = '#007bff'; // Azul
+            ctx.fillStyle = '#007bff';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
-            
-            // Texto del botón (BLANCO)
             ctx.fillStyle = 'white'; 
             ctx.font = '60px sans-serif';
             ctx.textAlign = 'center';
@@ -299,17 +241,24 @@
             ctx.fillText(text, canvas.width / 2, canvas.height / 2);
             
             const texture = new THREE.CanvasTexture(canvas);
-            const geometry = new THREE.PlaneGeometry(1, 0.25); // Aspecto 4:1
-            const material = new THREE.MeshBasicMaterial({ map: texture, transparent: true });
+            const geometry = new THREE.PlaneGeometry(1, 0.25);
+            
+            // --- ¡CAMBIO AQUÍ! ---
+            // Añadimos depthTest: false y renderOrder
+            const material = new THREE.MeshBasicMaterial({ 
+                map: texture, 
+                transparent: true,
+                depthTest: false, // No comprueba la profundidad (siempre visible)
+                renderOrder: 998  // Renderiza después de la escena, pero antes del retículo (999)
+            });
             
             const mesh = new THREE.Mesh(geometry, material);
             mesh.name = name;
-            mesh.position.set(0, yPos, -2); // 2 metros delante de la cámara
+            mesh.position.set(0, yPos, -2);
             
             return mesh;
         }
 
-        /** Crea los botones 3D para el menú principal */
         function createVRMenu() {
             const btn1 = createButtonMesh('Ir al Mapa (Entorno 1)', 'btn-to-env1', 0.25);
             const btn2 = createButtonMesh('Ir al Personaje (Entorno 2)', 'btn-to-env2', -0.25);
@@ -317,7 +266,6 @@
             interactableGroup.add(btn2);
         }
 
-        /** Crea los botones 3D para la UI en-juego */
         function createVRGameUI() {
             const btnMenu = createButtonMesh('Volver al Menú', 'btn-to-menu', 0.25);
             interactableGroup.add(btnMenu);
@@ -326,7 +274,7 @@
             if (currentState === 'ESCENARIO_1') {
                 text = 'Ir al Personaje (E2)';
                 name = 'btn-to-env2';
-            } else { // ESCENARIO_2
+            } else {
                 text = 'Ir al Mapa (E1)';
                 name = 'btn-to-env1';
             }
@@ -334,23 +282,14 @@
             interactableGroup.add(btnOther);
         }
 
-        /** Actualiza qué UI es visible (HTML o VR) */
         function updateUIVisibility() {
             const isVR = renderer.xr.isPresenting;
+            reticle.visible = isVR;
+            interactableGroup.visible = isVR;
+            uiMenu.style.display = (isVR || currentState !== 'MENU') ? 'none' : 'flex';
+            uiGame.style.display = (isVR || currentState === 'MENU') ? 'none' : 'flex';
             
-            reticle.visible = isVR; // El punto blanco
-            interactableGroup.visible = isVR; // Los botones 3D
-
-            if (isVR) {
-                // Si estamos en VR, ocultar TODOS los menús HTML
-                uiMenu.style.display = 'none';
-                uiGame.style.display = 'none';
-            } else {
-                // Si estamos en PC, mostrar el menú HTML correcto
-                uiMenu.style.display = (currentState === 'MENU') ? 'flex' : 'none';
-                uiGame.style.display = (currentState !== 'MENU') ? 'flex' : 'none';
-                
-                // Actualizar texto de botones HTML
+            if (!isVR) {
                 if (currentState === 'ESCENARIO_1') {
                     btnToOther.innerText = 'Ir al Personaje (E2)';
                     btnToOther.onclick = () => switchScene('ESCENARIO_2');
@@ -361,48 +300,69 @@
             }
         }
 
-        /** Maneja el "hover" (mirar) en VR */
-        function handleControllerRaycast() {
+        // --- ¡NUEVAS FUNCIONES DE INTERACCIÓN POR MIRADA! ---
+
+        /**
+         * Maneja el "hover" (mirar) y el "clic" (mirar por 2s) en VR.
+         * Se llama en CADA frame desde animate().
+         */
+        function handleGazeInteraction(delta) {
             if (!renderer.xr.isPresenting) return; // Solo en VR
 
-            // Lanza el rayo desde el centro de la cámara (gaze-based)
+            // 1. Lanzar el rayo desde el centro de la cámara
             raycaster.setFromCamera({ x: 0, y: 0 }, camera);
             const intersects = raycaster.intersectObjects(interactableGroup.children);
 
-            // Resetear escala de todos los botones
+            let target = null;
+            if (intersects.length > 0) {
+                target = intersects[0].object; // El objeto más cercano
+            }
+
+            // 2. Comprobar si estamos mirando un objeto nuevo o el mismo
+            if (target !== currentGazeTarget) {
+                // Si cambiamos de objetivo, reiniciar el temporizador
+                currentGazeTarget = target;
+                gazeDwellTime = 0;
+            }
+
+            // 3. Resetear la escala de todos los botones
             interactableGroup.children.forEach(child => {
                 child.scale.set(1, 1, 1);
             });
 
-            if (intersects.length > 0) {
-                // El botón que está siendo mirado se agranda
-                intersects[0].object.scale.set(1.2, 1.2, 1.2);
+            // 4. Si hay un objetivo, manejar el "hover" y el "clic"
+            if (currentGazeTarget) {
+                // Efecto "hover": agrandar el botón
+                currentGazeTarget.scale.set(1.2, 1.2, 1.2);
+                
+                // Incrementar el temporizador
+                gazeDwellTime += delta;
+
+                // 5. Comprobar si se cumplió el tiempo
+                if (gazeDwellTime >= DWELL_TIME_THRESHOLD) {
+                    onGazeSelect(currentGazeTarget); // ¡Hacer clic!
+                    gazeDwellTime = 0; // Resetear para evitar clics múltiples
+                }
             }
         }
 
-        /** Maneja el "clic" (gatillo) en VR */
-        function onSelectStart() {
-            if (!renderer.xr.isPresenting) return;
+        /**
+         * Se llama cuando el temporizador de mirada (dwell) se completa.
+         */
+        function onGazeSelect(selectedObject) {
+            if (!selectedObject) return;
 
-            // Lanza el rayo de nuevo para confirmar el clic
-            raycaster.setFromCamera({ x: 0, y: 0 }, camera);
-            const intersects = raycaster.intersectObjects(interactableGroup.children);
-
-            if (intersects.length > 0) {
-                const selectedObject = intersects[0].object;
-                
-                // Cambia de escena según el nombre del botón
-                switch (selectedObject.name) {
-                    case 'btn-to-env1':
-                        switchScene('ESCENARIO_1');
-                        break;
-                    case 'btn-to-env2':
-                        switchScene('ESCENARIO_2');
-                        break;
-                    case 'btn-to-menu':
-                        switchScene('MENU');
-                        break;
-                }
+            // Cambia de escena según el nombre del botón
+            switch (selectedObject.name) {
+                case 'btn-to-env1':
+                    switchScene('ESCENARIO_1');
+                    break;
+                case 'btn-to-env2':
+                    switchScene('ESCENARIO_2');
+                    break;
+                case 'btn-to-menu':
+                    switchScene('MENU');
+                    break;
             }
         }
 
@@ -413,7 +373,6 @@
             renderer.setSize(window.innerWidth, window.innerHeight);
         }
 
-        // --- Iniciar la aplicación ---
         init();
 
     </script>

@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <title>WebXR - Dos Entornos</title>
+    <meta charset="utf-g" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: sans-serif;
+            overflow: hidden; /* Evita barras de scroll */
+        }
+        
+        /* Contenedor principal que ocupa toda la pantalla */
+        #app-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Superposición para todos los elementos de UI */
+        #ui-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            pointer-events: none; /* Permite hacer clic "a través" de la superposición */
+            color: white;
+            text-shadow: 2px 2px 4px #000000;
+        }
+
+        /* Estilo base para los menús */
+        .menu {
+            background: rgba(0, 0, 0, 0.5);
+            border-radius: 10px;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            pointer-events: auto; /* Los botones SÍ deben ser clickeables */
+        }
+
+        /* Oculta los menús por defecto */
+        #menu-ui, #game-ui {
+            display: none;
+        }
+
+        /* Estilo de los botones */
+        button {
+            font-size: 1.2em;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            background-color: #007bff;
+            color: white;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+
+        button:hover {
+            background-color: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    
+    <div id="app-container"></div>
+
+    <div id="ui-overlay">
+        
+        <div id="menu-ui" class="menu">
+            <h1>Menú Principal</h1>
+            <button id="btn-to-env1">Ir al Mapa (Entorno 1)</button>
+            <button id="btn-to-env2">Ir al Personaje (Entorno 2)</button>
+        </div>
+
+        <div id="game-ui" class="menu">
+            <button id="btn-to-menu">Volver al Menú</button>
+            <button id="btn-to-other">Ir al otro entorno</button>
+        </div>
+
+    </div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+
+        import * as THREE from 'three';
+        import { VRButton } from 'three/addons/webxr/VRButton.js';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { FBXLoader } from 'three/addons/loaders/FBXLoader.js'; // Aunque el ejemplo usaba GLB, lo incluyo por si lo necesitas
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // --- Variables Globales ---
+        let camera, scene, renderer, clock, mixer;
+        let controls; // OrbitControls
+        let currentState = 'MENU';
+
+        // Elementos de la UI
+        const uiMenu = document.getElementById('menu-ui');
+        const uiGame = document.getElementById('game-ui');
+        const btnToEnv1 = document.getElementById('btn-to-env1');
+        const btnToEnv2 = document.getElementById('btn-to-env2');
+        const btnToMenu = document.getElementById('btn-to-menu');
+        const btnToOther = document.getElementById('btn-to-other');
+
+        // Contenedor de la App
+        const container = document.getElementById('app-container');
+
+        // --- Inicialización ---
+        function init() {
+            clock = new THREE.Clock();
+
+            // Escena
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x222222); // Fondo oscuro para el menú
+
+            // Cámara
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 0, 5); // Posición inicial para el menú
+
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setPixelRatio(window.devicePixelRatio); // Optimización para celulares
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.outputColorSpace = THREE.SRGBColorSpace;
+            renderer.setAnimationLoop(animate); // Bucle de animación
+            
+            // WebXR
+            renderer.xr.enabled = true;
+            document.body.appendChild(VRButton.createButton(renderer));
+
+            container.appendChild(renderer.domElement);
+
+            // --- Eventos de la UI ---
+            btnToEnv1.onclick = () => switchScene('ESCENARIO_1');
+            btnToEnv2.onclick = () => switchScene('ESCENARIO_2');
+            btnToMenu.onclick = () => switchScene('MENU');
+            // 'btnToOther.onclick' se asignará dinámicamente
+
+            // --- Eventos de la Ventana ---
+            window.addEventListener('resize', onWindowResize);
+
+            // Iniciar en el menú
+            switchScene('MENU');
+        }
+
+        // --- Bucle de Animación (Render Loop) ---
+        function animate() {
+            const delta = clock.getDelta();
+
+            // Actualizar solo lo necesario para la escena actual
+            if (currentState === 'ESCENARIO_1' || currentState === 'ESCENARIO_2') {
+                if (controls) controls.update(); // Actualiza OrbitControls (para mouse)
+            }
+
+            if (currentState === 'ESCENARIO_2') {
+                if (mixer) mixer.update(delta); // Actualiza la animación del personaje
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        // --- Manejador de Estado (Cambio de Escena) ---
+        function switchScene(newState) {
+            currentState = newState;
+
+            // 1. Limpiar la escena anterior
+            scene.clear();
+            if (mixer) mixer = null;
+            if (controls) controls.dispose(); // Elimina listeners de OrbitControls
+
+            // 2. Configurar la nueva escena
+            switch (newState) {
+                case 'MENU':
+                    setupMenu();
+                    uiMenu.style.display = 'flex';
+                    uiGame.style.display = 'none';
+                    break;
+                
+                case 'ESCENARIO_1':
+                    setupEscenario1();
+                    uiMenu.style.display = 'none';
+                    uiGame.style.display = 'flex';
+                    btnToOther.innerText = 'Ir al Personaje (E2)';
+                    btnToOther.onclick = () => switchScene('ESCENARIO_2');
+                    break;
+                
+                case 'ESCENARIO_2':
+                    setupEscenario2();
+                    uiMenu.style.display = 'none';
+                    uiGame.style.display = 'flex';
+                    btnToOther.innerText = 'Ir al Mapa (E1)';
+                    btnToOther.onclick = () => switchScene('ESCENARIO_1');
+                    break;
+            }
+        }
+
+        // --- Configuración de Escena: MENÚ ---
+        function setupMenu() {
+            scene.background = new THREE.Color(0x222222);
+            camera.position.set(0, 0, 0.1); // Posición para VR (cerca del origen)
+            // Añadimos una luz ambiental simple
+            scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+
+            // Creamos un cubo giratorio para que no esté vacío
+            const geometry = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+            const material = new THREE.MeshNormalMaterial();
+            const cube = new THREE.Mesh(geometry, material);
+            cube.position.set(0, 0, -2); // Ponerlo delante de la cámara
+            scene.add(cube);
+        }
+
+        // --- Configuración de Escena: MAPA (E1) ---
+        function setupEscenario1() {
+            // Fondo de cielo
+            scene.background = new THREE.Color(0x88ccee);
+            scene.fog = new THREE.Fog(0x88ccee, 0, 50);
+
+            // Luces (del ejemplo 1)
+            const fillLight1 = new THREE.HemisphereLight(0x8dc1de, 0x00668d, 1.5);
+            fillLight1.position.set(2, 1, 1);
+            scene.add(fillLight1);
+
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 2.5);
+            directionalLight.position.set(-5, 25, -1);
+            scene.add(directionalLight);
+
+            // Posición de cámara FIJA (como pediste)
+            camera.position.set(0, 7, 0); // Vista desde arriba
+
+            // Controles de mouse (OrbitControls)
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.target.set(0, 0, 0); // Mirando al centro del mapa
+            controls.enableDamping = true;
+            controls.enablePan = false; // Deshabilita el "paneo" (arrastrar)
+            controls.enableZoom = true; // Permite hacer zoom
+            // No hay movimiento de WASD, cumpliendo el requisito
+
+            // Cargar el mapa GLB
+            const loader = new GLTFLoader();
+            // (Usando el modelo de tu ejemplo)
+            loader.load('models/mapa_final_simpson.glb', (gltf) => {
+                scene.add(gltf.scene);
+            }, undefined, (error) => {
+                console.error('Error al cargar el mapa E1:', error);
+            });
+        }
+
+        // --- Configuración de Escena: PERSONAJE (E2) ---
+        function setupEscenario2() {
+            // Fondo claro
+            scene.background = new THREE.Color(0xa0e9ff);
+
+            // Luces
+            scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1.5));
+            const dirLight = new THREE.DirectionalLight(0xffffff, 2.5);
+            dirLight.position.set(1, 2, 3);
+            scene.add(dirLight);
+
+            // Piso colorido
+            const floorGeo = new THREE.PlaneGeometry(100, 100);
+            const floorMat = new THREE.MeshStandardMaterial({ color: 0x99ff99, side: THREE.DoubleSide });
+            const floor = new THREE.Mesh(floorGeo, floorMat);
+            floor.rotation.x = -Math.PI / 2; // Poner el plano horizontal
+            scene.add(floor);
+
+            // Posición de cámara
+            camera.position.set(2, 2, 5); // Buena vista del personaje
+
+            // Controles de mouse (OrbitControls)
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.target.set(0, 1, 0); // Mirar al torso del personaje
+            controls.enableDamping = true;
+
+            // Cargar el personaje (usando el GLB de tu ejemplo 2)
+            // Si quieres usar FBX, cambia 'GLTFLoader' por 'FBXLoader' y ajusta la escala
+            const loader = new GLTFLoader();
+            loader.load('https://threejs.org/examples/models/gltf/Soldier.glb', (gltf) => {
+                const model = gltf.scene;
+                model.position.y = 0; // Ponerlo sobre el piso
+                scene.add(model);
+
+                // Configurar animación (la primera que encuentre, que es 'Run')
+                mixer = new THREE.AnimationMixer(model);
+                const action = mixer.clipAction(gltf.animations[0]);
+                action.play();
+            }, undefined, (error) => {
+                console.error('Error al cargar el personaje E2:', error);
+            });
+        }
+
+        // --- Manejador de Redimensión de Ventana ---
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // --- Iniciar la aplicación ---
+        init();
+
+    </script>
+</body>
+</html>

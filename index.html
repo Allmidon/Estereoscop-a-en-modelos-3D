@@ -233,7 +233,7 @@
             scene.add(cube);
         }
 
-        function setupEscenario1() {
+       function setupEscenario1() {
             scene.background = new THREE.Color(0x88ccee);
             scene.fog = new THREE.Fog(0x88ccee, 0, 50);
             const fillLight1 = new THREE.HemisphereLight(0x8dc1de, 0x00668d, 1.5);
@@ -242,13 +242,19 @@
             const directionalLight = new THREE.DirectionalLight(0xffffff, 2.5);
             directionalLight.position.set(-5, 25, -1);
             scene.add(directionalLight);
-            camera.position.set(0, 8, 0);
+            camera.position.set(0, 20, 0);
             controls = new OrbitControls(camera, renderer.domElement);
             controls.target.set(0, 0, 0);
             controls.enableDamping = true;
             controls.enablePan = false;
+            
             const loader = new GLTFLoader();
             loader.load('models/mapa_final_simpson.glb', (gltf) => {
+                
+                // --- ¡CAMBIO AQUÍ! ---
+                // Rotamos el mapa 90 grados a la derecha (sentido horario sobre Y)
+                gltf.scene.rotation.y = -Math.PI / 2; // -90 grados
+
                 scene.add(gltf.scene);
             });
         }
@@ -259,29 +265,34 @@
             const dirLight = new THREE.DirectionalLight(0xffffff, 2.5);
             dirLight.position.set(1, 2, 3);
             scene.add(dirLight);
-
+            
             const floorGeo = new THREE.PlaneGeometry(100, 100);
             const floorMat = new THREE.MeshStandardMaterial({ color: 0x99ff99, side: THREE.DoubleSide });
             const floor = new THREE.Mesh(floorGeo, floorMat);
             floor.rotation.x = -Math.PI / 2;
             scene.add(floor);
-
-            camera.position.set(2, 2, 5);
-
+            
+            camera.position.set(2, 2, 5); 
+            
             controls = new OrbitControls(camera, renderer.domElement);
-            controls.target.set(0, 1, -3); // Apunta a la posición del personaje
+            
+            // --- ¡CAMBIO 1! ---
+            // Apuntar los controles de PC a la nueva posición del personaje
+            controls.target.set(3, 1, -3); 
             controls.enableDamping = true;
-
+            
             const loader = new GLTFLoader();
             loader.load('https://threejs.org/examples/models/gltf/Soldier.glb', (gltf) => {
                 const model = gltf.scene;
-
-                model.position.set(0, 0, -3); // Lo pone 3m al frente
-
-                // --- ¡CAMBIO AQUÍ! ---
-                // Rota el modelo 180 grados sobre el eje Y (vertical)
-                model.rotation.y = Math.PI;
-
+                
+                // --- ¡CAMBIO 2! ---
+                // Posicionar el modelo a la DERECHA (X=3) y al FRENTE (Z=-3)
+                model.position.set(3, 0, -3); 
+                
+                // --- ¡CAMBIO 3! ---
+                // Rotarlo para que mire al origen (0,0,0) desde su nueva posición
+                model.rotation.y = Math.PI * 0.75; // 135 grados
+                
                 scene.add(model);
                 mixer = new THREE.AnimationMixer(model);
                 mixer.clipAction(gltf.animations[0]).play();
@@ -326,14 +337,14 @@
         }
 
         function createVRMenu() {
-            const btn1 = createButtonMesh('Ir al Mapa (Entorno 1)', 'btn-to-env1', 0.25);
-            const btn2 = createButtonMesh('Ir al Personaje (Entorno 2)', 'btn-to-env2', -0.25);
+            const btn1 = createButtonMesh('Ir al Mapa (Entorno 1)', 'btn-to-env1', 0.5);
+            const btn2 = createButtonMesh('Ir al Personaje (Entorno 2)', 'btn-to-env2', 0.25);
             interactableGroup.add(btn1);
             interactableGroup.add(btn2);
         }
 
         function createVRGameUI() {
-            const btnMenu = createButtonMesh('Volver al Menú', 'btn-to-menu', 0.25);
+            const btnMenu = createButtonMesh('Volver al Menú', 'btn-to-menu', 0.5);
             interactableGroup.add(btnMenu);
 
             let text, name;
@@ -344,7 +355,7 @@
                 text = 'Ir al Mapa (E1)';
                 name = 'btn-to-env1';
             }
-            const btnOther = createButtonMesh(text, name, -0.25);
+            const btnOther = createButtonMesh(text, name, 0.25);
             interactableGroup.add(btnOther);
         }
 

@@ -209,9 +209,9 @@
             const floor = new THREE.Mesh(floorGeo, floorMat);
             floor.rotation.x = -Math.PI / 2;
             scene.add(floor);
-            camera.position.set(2, 2, 5);
+            camera.position.set(2, 2, 4);
             controls = new OrbitControls(camera, renderer.domElement);
-            controls.target.set(0, 1, 0);
+            controls.target.set(0, 1, -2);
             controls.enableDamping = true;
             const loader = new GLTFLoader();
             loader.load('https://threejs.org/examples/models/gltf/Soldier.glb', (gltf) => {
